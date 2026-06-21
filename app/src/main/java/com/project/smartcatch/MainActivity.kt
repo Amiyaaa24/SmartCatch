@@ -108,12 +108,14 @@ fun SmartCatchBottomSheet(
     onDismiss: () -> Unit,
     onSave: (fileName: String, folderName: String) -> Unit
 ) {
-    // Quản lý trạng thái trượt của Bottom Sheet
     val sheetState = rememberModalBottomSheetState()
 
-    // Lưu trữ dữ liệu người dùng nhập
     var fileName by remember { mutableStateOf("Rename") }
     var folderName by remember { mutableStateOf("Pictures/SmartCatch") }
+
+    // THÊM MỚI: Các biến dùng cho Dropdown Menu
+    var expanded by remember { mutableStateOf(false) }
+    val folderOptions = listOf("Pictures/SmartCatch", "DCIM/Camera", "Download", "Tạo thư mục mới...")
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -131,7 +133,7 @@ fun SmartCatchBottomSheet(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            // Ô nhập tên ảnh
+            // 1. Ô nhập tên ảnh
             OutlinedTextField(
                 value = fileName,
                 onValueChange = { fileName = it },
@@ -141,17 +143,44 @@ fun SmartCatchBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Ô chọn Album
-            OutlinedTextField(
-                value = folderName,
-                onValueChange = { folderName = it },
-                label = { Text("Chọn Album") },
-                modifier = Modifier.fillMaxWidth()
-            )
+            // 2. Ô chọn Album (Đã nâng cấp thành Dropdown Menu)
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = !expanded }
+            ) {
+                OutlinedTextField(
+                    value = folderName,
+                    onValueChange = {},
+                    readOnly = true, // Chỉ cho phép chọn, không cho phép gõ phím
+                    label = { Text("Chọn Album") },
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                    },
+                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                    modifier = Modifier
+                        .menuAnchor() // Bắt buộc phải có để menu trượt xuống đúng vị trí
+                        .fillMaxWidth()
+                )
+
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    folderOptions.forEach { selectionOption ->
+                        DropdownMenuItem(
+                            text = { Text(selectionOption) },
+                            onClick = {
+                                folderName = selectionOption
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Nút Lưu
+            // 3. Nút Lưu
             Button(
                 onClick = { onSave(fileName, folderName) },
                 modifier = Modifier.fillMaxWidth()
