@@ -12,6 +12,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.IntentCompat
+import androidx.work.Data
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -24,7 +27,13 @@ class MainActivity : ComponentActivity() {
             // Biến kiểm soát trạng thái hiển thị của Bottom Sheet
             var showBottomSheet by remember { mutableStateOf(false) }
 
-            // Tự động bật Bottom Sheet nếu ứng dụng được mở qua chức năng Share
+            val realImageUri = remember {
+                if (intent?.action == Intent.ACTION_SEND) {
+                    val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    uri?.toString() ?: ""
+                } else ""
+            }
+
             LaunchedEffect(Unit) {
                 if (intent?.action == Intent.ACTION_SEND || intent?.action == Intent.ACTION_SEND_MULTIPLE) {
                     showBottomSheet = true
@@ -50,13 +59,26 @@ class MainActivity : ComponentActivity() {
                 SmartCatchBottomSheet(
                     onDismiss = {
                         showBottomSheet = false
-                        finish() // Thoát app để quay lại app cũ khi đóng pop-up
+                        finish()
                     },
                     onSave = { name, folder ->
-                        Log.d("SmartCatch", "Yêu cầu lưu: $name vào thư mục $folder")
-                        // TODO: Gọi logic lưu file thực tế tại đây
+                        val inputData = Data.Builder()
+                            .putString("FILE_NAME", name)
+                            .putString("FOLDER_NAME", folder)
+                            .putString("FILE_URI", realImageUri)
+                            .build()
+
+                        val saveRequest = OneTimeWorkRequestBuilder<SaveFileWorker>()
+                            .setInputData(inputData)
+                            .build()
+
+                        // 3. Giao việc cho WorkManager
+                        WorkManager.getInstance(applicationContext).enqueue(saveRequest)
+
+                        Log.d("SmartCatch", "Đã ném tác vụ vào hàng đợi nền")
+
                         showBottomSheet = false
-                        finish() // Thoát app sau khi bấm LƯU
+                        finish() // Đóng pop-up và trả người dùng về app cũ ngay lập tức
                     }
                 )
             }
