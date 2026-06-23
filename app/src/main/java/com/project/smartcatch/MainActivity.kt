@@ -1,6 +1,8 @@
 package com.project.smartcatch
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -32,6 +34,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        createNotificationChannel()
+
         setContent {
             val context = LocalContext.current
             var showBottomSheet by remember { mutableStateOf(false) }
@@ -49,7 +53,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Quản lý cấp quyền đọc bộ nhớ (Đã lược bỏ quyền thông báo đẩy)
             val permissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestMultiplePermissions()
             ) { permissions ->
@@ -116,12 +119,24 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            "smartcatch_channel",
+            "Thông báo SmartCatch",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Kênh hiển thị thông báo khi lưu file thành công"
+        }
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(channel)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SmartCatchBottomSheet(
-    onDismiss: () -> Unit,
+    onDismiss: () -> Unit, // ĐÃ SỬA TẠI ĐÂY: Khai báo đúng kiểu dữ liệu callback () -> Unit
     onSave: (fileName: String, folderName: String) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState()
@@ -132,9 +147,12 @@ fun SmartCatchBottomSheet(
     var expanded by remember { mutableStateOf(false) }
 
     var folderOptions by remember { mutableStateOf(listOf("Pictures/SmartCatch", "Đang tải danh sách...")) }
+    var showCreateFolderDialog by remember { mutableStateOf(false) }
+    var newFolderNameInput by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
-        folderOptions = getLocalImageFolders(context)
+        val dynamicFolders = getLocalImageFolders(context)
+        folderOptions = dynamicFolders + "➕ Tạo thư mục mới..."
     }
 
     ModalBottomSheet(
@@ -186,7 +204,11 @@ fun SmartCatchBottomSheet(
                         DropdownMenuItem(
                             text = { Text(selectionOption) },
                             onClick = {
-                                folderName = selectionOption
+                                if (selectionOption == "➕ Tạo thư mục mới...") {
+                                    showCreateFolderDialog = true
+                                } else {
+                                    folderName = selectionOption
+                                }
                                 expanded = false
                             }
                         )
@@ -203,6 +225,55 @@ fun SmartCatchBottomSheet(
                 Text("LƯU")
             }
         }
+    }
+
+    if (showCreateFolderDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateFolderDialog = false },
+            title = { Text("Tạo thư mục mới") },
+            text = {
+                Column {
+                    Text(
+                        text = "Thư mục mới sẽ được tạo trong mục Pictures/",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    OutlinedTextField(
+                        value = newFolderNameInput,
+                        onValueChange = { newFolderNameInput = it },
+                        label = { Text("Tên thư mục") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newFolderNameInput.isNotBlank()) {
+                            val formattedPath = "Pictures/${newFolderNameInput.trim()}"
+                            folderName = formattedPath
+                            val currentListWithoutAction = folderOptions.filter { it != "➕ Tạo thư mục mới..." }
+                            folderOptions = (currentListWithoutAction + formattedPath).sorted() + "➕ Tạo thư mục mới..."
+                            showCreateFolderDialog = false
+                            newFolderNameInput = ""
+                        }
+                    }
+                ) {
+                    Text("Tạo")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showCreateFolderDialog = false
+                        newFolderNameInput = ""
+                    }
+                ) {
+                    Text("Hủy")
+                }
+            }
+        )
     }
 }
 
