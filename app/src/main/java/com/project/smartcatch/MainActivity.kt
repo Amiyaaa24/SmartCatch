@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -40,6 +41,7 @@ class MainActivity : ComponentActivity() {
             val context = LocalContext.current
             var showBottomSheet by remember { mutableStateOf(false) }
 
+            // 1. Nhận diện và trích xuất dữ liệu dựa theo kiểu chia sẻ (Ảnh hoặc Link)
             val realImageUri = remember {
                 if (intent?.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
                     val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
@@ -47,12 +49,21 @@ class MainActivity : ComponentActivity() {
                 } else ""
             }
 
+            // THÊM MỚI: Trích xuất chuỗi văn bản văn bản/đường dẫn (text/plain)
+            val sharedLink = remember {
+                if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
+                    intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+                } else ""
+            }
+
+            // Kích hoạt Bottom Sheet nếu có bất kỳ luồng chia sẻ nào truyền tới
             LaunchedEffect(Unit) {
                 if (intent?.action == Intent.ACTION_SEND || intent?.action == Intent.ACTION_SEND_MULTIPLE) {
                     showBottomSheet = true
                 }
             }
 
+            // Quản lý cấp quyền hệ thống
             val permissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestMultiplePermissions()
             ) { permissions ->
@@ -63,13 +74,11 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(Unit) {
                 val permissionsToRequest = mutableListOf<String>()
-
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
                 } else {
                     permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
                 }
-
                 val missingPermissions = permissionsToRequest.filter {
                     ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
                 }.toTypedArray()
@@ -92,30 +101,55 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // 2. Điều hướng hiển thị Bottom Sheet dựa vào loại dữ liệu đầu vào
             if (showBottomSheet) {
-                SmartCatchBottomSheet(
-                    onDismiss = {
-                        showBottomSheet = false
-                        finishAndRemoveTask()
-                    },
-                    onSave = { name, folder ->
-                        if (realImageUri.isNotEmpty()) {
-                            val inputData = Data.Builder()
-                                .putString("FILE_NAME", name)
-                                .putString("FOLDER_NAME", folder)
-                                .putString("FILE_URI", realImageUri)
-                                .build()
-
-                            val saveRequest = OneTimeWorkRequestBuilder<SaveFileWorker>()
-                                .setInputData(inputData)
-                                .build()
-
-                            WorkManager.getInstance(applicationContext).enqueue(saveRequest)
+                if (sharedLink.isNotEmpty()) {
+                    // LUỒNG MỚI: Người dùng chia sẻ đường dẫn (Giai đoạn 2)
+                    // Tạm thời hiển thị một thông báo hoặc giao diện chờ bóc tách link
+                    ModalBottomSheet(
+                        onDismissRequest = {
+                            showBottomSheet = false
+                            finishAndRemoveTask()
                         }
-                        showBottomSheet = false
-                        finishAndRemoveTask()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(text = "Link nhận được:", style = MaterialTheme.typography.titleMedium)
+                            Text(text = sharedLink, modifier = Modifier.padding(vertical = 8.dp))
+                            CircularProgressIndicator() // Hiển thị vòng xoay chờ bóc tách
+                            Text(text = "Đang bóc tách liên kết...", modifier = Modifier.padding(top = 8.dp))
+                        }
                     }
-                )
+                } else {
+                    // LUỒNG CŨ: Người dùng chia sẻ ảnh trực tiếp (Giai đoạn 1)
+                    SmartCatchBottomSheet(
+                        onDismiss = {
+                            showBottomSheet = false
+                            finishAndRemoveTask()
+                        },
+                        onSave = { name, folder ->
+                            if (realImageUri.isNotEmpty()) {
+                                val inputData = Data.Builder()
+                                    .putString("FILE_NAME", name)
+                                    .putString("FOLDER_NAME", folder)
+                                    .putString("FILE_URI", realImageUri)
+                                    .build()
+
+                                val saveRequest = OneTimeWorkRequestBuilder<SaveFileWorker>()
+                                    .setInputData(inputData)
+                                    .build()
+
+                                WorkManager.getInstance(applicationContext).enqueue(saveRequest)
+                            }
+                            showBottomSheet = false
+                            finishAndRemoveTask()
+                        }
+                    )
+                }
             }
         }
     }
@@ -132,6 +166,7 @@ class MainActivity : ComponentActivity() {
         notificationManager.createNotificationChannel(channel)
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
