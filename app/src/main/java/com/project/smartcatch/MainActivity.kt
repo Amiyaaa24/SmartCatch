@@ -1,34 +1,43 @@
 package com.project.smartcatch
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.work.Data
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Hàm xử lý Intent được gọi để bóc tách dữ liệu và ghi Log
-        handleSharedIntent(intent)
-
         setContent {
-            // Biến kiểm soát trạng thái hiển thị của Bottom Sheet
+            val context = LocalContext.current
             var showBottomSheet by remember { mutableStateOf(false) }
 
             val realImageUri = remember {
-                if (intent?.action == Intent.ACTION_SEND) {
+                if (intent?.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
                     val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
                     uri?.toString() ?: ""
                 } else ""
@@ -40,7 +49,33 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Giao diện chính của màn hình
+            // Quản lý cấp quyền đọc bộ nhớ (Đã lược bỏ quyền thông báo đẩy)
+            val permissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestMultiplePermissions()
+            ) { permissions ->
+                permissions.entries.forEach {
+                    Log.d("SmartCatch", "Quyền ${it.key} được cấp: ${it.value}")
+                }
+            }
+
+            LaunchedEffect(Unit) {
+                val permissionsToRequest = mutableListOf<String>()
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
+                } else {
+                    permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
+
+                val missingPermissions = permissionsToRequest.filter {
+                    ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+                }.toTypedArray()
+
+                if (missingPermissions.isNotEmpty()) {
+                    permissionLauncher.launch(missingPermissions)
+                }
+            }
+
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background
@@ -48,82 +83,41 @@ class MainActivity : ComponentActivity() {
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(text = "SmartCatch đã sẵn sàng xử lý dữ liệu!")
                 }
             }
 
-            // Gọi giao diện Bottom Sheet (Bước 1 được nhúng vào đây)
             if (showBottomSheet) {
                 SmartCatchBottomSheet(
                     onDismiss = {
                         showBottomSheet = false
-                        finish()
+                        finishAndRemoveTask()
                     },
                     onSave = { name, folder ->
-                        val inputData = Data.Builder()
-                            .putString("FILE_NAME", name)
-                            .putString("FOLDER_NAME", folder)
-                            .putString("FILE_URI", realImageUri)
-                            .build()
+                        if (realImageUri.isNotEmpty()) {
+                            val inputData = Data.Builder()
+                                .putString("FILE_NAME", name)
+                                .putString("FOLDER_NAME", folder)
+                                .putString("FILE_URI", realImageUri)
+                                .build()
 
-                        val saveRequest = OneTimeWorkRequestBuilder<SaveFileWorker>()
-                            .setInputData(inputData)
-                            .build()
+                            val saveRequest = OneTimeWorkRequestBuilder<SaveFileWorker>()
+                                .setInputData(inputData)
+                                .build()
 
-                        // 3. Giao việc cho WorkManager
-                        WorkManager.getInstance(applicationContext).enqueue(saveRequest)
-
-                        Log.d("SmartCatch", "Đã ném tác vụ vào hàng đợi nền")
-
+                            WorkManager.getInstance(applicationContext).enqueue(saveRequest)
+                        }
                         showBottomSheet = false
-                        finish() // Đóng pop-up và trả người dùng về app cũ ngay lập tức
+                        finishAndRemoveTask()
                     }
                 )
             }
         }
     }
-
-    private fun handleSharedIntent(intent: Intent?) {
-        if (intent == null) return
-
-        val action = intent.action
-        val type = intent.type
-
-        when {
-            // Trường hợp 1: Nhận 1 mục (Xử lý cả ảnh hoặc link đơn lẻ)
-            Intent.ACTION_SEND == action && type != null -> {
-                if (type.startsWith("image/")) {
-                    val imageUri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
-                    if (imageUri != null) {
-                        Log.d("SmartCatch", "Đường dẫn ảnh đơn: $imageUri")
-                    }
-                } else if ("text/plain" == type) {
-                    val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-                    if (sharedText != null) {
-                        Log.d("SmartCatch", "Nội dung link nhận được: $sharedText")
-                    }
-                }
-            }
-
-            // Trường hợp 2: Nhận nhiều ảnh cùng lúc
-            Intent.ACTION_SEND_MULTIPLE == action && type != null -> {
-                if (type.startsWith("image/")) {
-                    val imageUris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-                    if (imageUris != null) {
-                        Log.d("SmartCatch", "Số lượng ảnh nhận được: ${imageUris.size}")
-                        for (uri in imageUris) {
-                            Log.d("SmartCatch", "URI ảnh trong danh sách: $uri")
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
-// BƯỚC 1: Hàm cấu trúc giao diện Bottom Sheet Pop-up
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SmartCatchBottomSheet(
@@ -131,13 +125,17 @@ fun SmartCatchBottomSheet(
     onSave: (fileName: String, folderName: String) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState()
+    val context = LocalContext.current
 
     var fileName by remember { mutableStateOf("Rename") }
     var folderName by remember { mutableStateOf("Pictures/SmartCatch") }
-
-    // THÊM MỚI: Các biến dùng cho Dropdown Menu
     var expanded by remember { mutableStateOf(false) }
-    val folderOptions = listOf("Pictures/SmartCatch", "DCIM/Camera", "Download", "Tạo thư mục mới...")
+
+    var folderOptions by remember { mutableStateOf(listOf("Pictures/SmartCatch", "Đang tải danh sách...")) }
+
+    LaunchedEffect(Unit) {
+        folderOptions = getLocalImageFolders(context)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -155,7 +153,6 @@ fun SmartCatchBottomSheet(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            // 1. Ô nhập tên ảnh
             OutlinedTextField(
                 value = fileName,
                 onValueChange = { fileName = it },
@@ -165,7 +162,6 @@ fun SmartCatchBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 2. Ô chọn Album (Đã nâng cấp thành Dropdown Menu)
             ExposedDropdownMenuBox(
                 expanded = expanded,
                 onExpandedChange = { expanded = !expanded }
@@ -173,14 +169,12 @@ fun SmartCatchBottomSheet(
                 OutlinedTextField(
                     value = folderName,
                     onValueChange = {},
-                    readOnly = true, // Chỉ cho phép chọn, không cho phép gõ phím
+                    readOnly = true,
                     label = { Text("Chọn Album") },
-                    trailingIcon = {
-                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
-                    },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                     modifier = Modifier
-                        .menuAnchor() // Bắt buộc phải có để menu trượt xuống đúng vị trí
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                         .fillMaxWidth()
                 )
 
@@ -202,7 +196,6 @@ fun SmartCatchBottomSheet(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 3. Nút Lưu
             Button(
                 onClick = { onSave(fileName, folderName) },
                 modifier = Modifier.fillMaxWidth()
@@ -211,4 +204,27 @@ fun SmartCatchBottomSheet(
             }
         }
     }
+}
+
+suspend fun getLocalImageFolders(context: Context): List<String> = withContext(Dispatchers.IO) {
+    val folders = mutableSetOf<String>()
+    val projection = arrayOf(MediaStore.Images.Media.RELATIVE_PATH)
+    val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+
+    try {
+        context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            val pathColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
+            while (cursor.moveToNext()) {
+                val path = cursor.getString(pathColumn)
+                if (path != null) {
+                    folders.add(path.trimEnd('/'))
+                }
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("SmartCatch", "Lỗi khi quét thư mục", e)
+    }
+
+    val defaultFolders = listOf("Pictures/SmartCatch", "DCIM/Camera", "Download")
+    (defaultFolders + folders.sorted()).distinct()
 }
